@@ -1,0 +1,319 @@
+#!/usr/bin/env ruby
+# Given an apple crash report, generate a Bugsnag report
+# Usage:
+#
+#     BugsnagAppleReporter.send_report("BUGSNAG_API_KEY", "/path/to/crash.log")
+#
+# or via command-line:
+#
+#     bugsnag-apple-reporter "BUGSNAG_API_KEY" "/path/to/crash.log"
+#
+require 'net/http'
+require 'uri'
+require 'json'
+require 'date'
+
+module BugsnagAppleReporter
+  DEFAULT_ENDPOINT = "https://notify.bugsnag.com"
+
+  def self.send_report api_key, crash_log_path, endpoint=DEFAULT_ENDPOINT
+    report = BugsnagAppleReporter::Parser.new(crash_log_path).parse
+    payload = BugsnagAppleReporter::Formatter.new(report).format
+    transport = BugsnagAppleReporter::Transport.new(endpoint, api_key)
+    transport.deliver(payload)
+  end
+
+  class Report
+    attr_reader :header
+    attr_reader :backtraces
+    attr_reader :binary_images
+    attr_accessor :program_counter
+    attr_accessor :link_register
+    attr_accessor :app_uuid
+
+    def initialize
+      @backtraces = []
+      @binary_images = {}
+      @header = {}
+    end
+  end
+
+  class Transport
+    attr_reader :uri
+
+    def initialize endpoint, api_key
+      @api_key = api_key
+      @uri = URI(endpoint)
+    end
+
+    def deliver payload
+      payload[:apiKey] = @api_key
+      http = Net::HTTP.new(uri.host, uri.port)
+      http.use_ssl = uri.port == 443
+      http.post(uri.path.empty? ? '/' : uri.path,
+                JSON.dump(payload),
+                {
+        'Content-Type' => 'application/json',
+        'Accept-Encoding' => 'identity',
+        'Bugsnag-Api-Key' => @api_key,
+        'Bugsnag-Payload-Version' => '4',
+      })
+    end
+  end
+
+  class Formatter
+    attr_reader :report
+
+    def initialize report
+      @report = report
+    end
+
+    # Format the report as a Bugsnag Error Report API payload
+    # {
+    #   events: [
+    #     {
+    #       exceptions: [
+    #         {
+    #           errorClass: "name",
+    #           message: "description",
+    #           type: "cocoa",
+    #           stacktrace: [
+    #             {
+    #               frameAddress: "0x00000001836a8f04",
+    #               machoLoadAddress: "0x1836a5000",
+    #               machoUUID: "25E5E6EE-1009-3937-B122-C4B509716294",
+    #               machoFile: "/usr/lib/system/libdispatch.dylib"
+    #               isPC: false,
+    #               isLR: true,
+    #             }
+    #           ]
+    #         }
+    #       ],
+    #       threads: [
+    #         {
+    #           name: "com.apple.main-thread",
+    #           index: 0,
+    #           type: "cocoa",
+    #           stacktrace: []
+    #         }
+    #       ]
+    #       app: {},
+    #       device: {},
+    #       metaData: {}
+    #     }
+    #   ]
+    # }
+    def format
+      os = /(.*)?\s(\d.*)/.match(report.header.delete("OS Version"))
+      time = ::DateTime.strptime(report.header.delete("Date/Time"),
+                               "%Y-%m-%d %H:%M:%S.%L %z")
+      event = {
+        exceptions: [{
+          errorClass: report.header.delete("Exception Type"),
+          message: report.header.delete("Termination Reason"),
+          type: "cocoa",
+          stacktrace: []
+        }],
+        unhandled: true,
+        severity: 'error',
+        severityReason: { type: "unhandledException" },
+        threads: [],
+        app: {
+          version: report.header.delete("Version"),
+          id: report.header.delete("Identifier"),
+          inForeground: report.header["Role"] == "Foreground",
+          dsymUUIDs: [ report.app_uuid ],
+        },
+        device: {
+          model: report.header.delete("Hardware Model"),
+          osName: os[1],
+          osVersion: os[2],
+          manufacturer: "Apple",
+          time: time.iso8601(3),
+        },
+        metaData: { report: {}},
+      }
+
+      report.header.each do |key, value|
+        event[:metaData][:report][key] = value
+      end
+      report.backtraces.each do |backtrace|
+        backtrace[:stacktrace].each do |frame|
+          if image = report.binary_images[frame[:machoLoadAddress]]
+            frame[:machoFile] = image[:path]
+            frame[:machoUUID] = image[:uuid]
+          end
+          frame[:isPC] = true if frame[:frameAddress] == report.program_counter
+          frame[:isLR] = true if frame[:frameAddress] == report.link_register
+        end
+        if backtrace[:crashed]
+          event[:exceptions][0][:stacktrace] = backtrace[:stacktrace]
+        else
+          backtrace.delete(:crashed)
+          backtrace[:type] = 'cocoa'
+          event[:threads] << backtrace
+        end
+      end
+      {
+        notifier: {
+          name: 'iOS Bugsnag Notifier',
+          url: 'https://github.com/bugsnag/bugsnag-cocoa',
+          version: '5.15.4',
+        },
+        events: [event],
+      }
+    end
+  end
+
+  class Parser
+    attr_reader :report
+    attr_reader :report_path
+    attr_accessor :current_backtrace
+
+    def initialize report_path
+      @state = :header
+      @report = Report.new
+      @report_path = report_path
+    end
+    # Parse an Apple crash report, creating a report
+    # States:
+    # * header: Parse device and app metadata from header
+    # * thread: Parse thread name and crash state
+    # * registers: Parse registers
+    # * images: Parse binary images
+    def parse
+      contents = open(report_path, &:read).split("\n")
+      parse_header(contents)
+      parse_threads(contents)
+      parse_registers(contents)
+      parse_images(contents)
+      report
+    end
+
+    private
+
+    # $1 - Header field name
+    # $2 - Header field value
+    HEADER_FIELD_MATCHER = /^(\w.*?):\s+(.*)$/
+    # $1 - Thread number
+    # $2 - Thread name
+    THREAD_NAME_MATCHER = /^Thread (\d+) name:\s+(.*)$/
+    # $1 - Thread number
+    # $2 - non-nil if thread crashed
+    THREAD_CRASH_MATCHER = /^Thread (\d+)(\sCrashed)?:$/
+    # Matches a frame in a stacktrace in the format:
+    #
+    #   2   libdispatch.dylib 0x00000001836a9e58 0x1836a5000 + 20056
+    #
+    # $1 - Frame number
+    # $2 - Binary name
+    # $3 - Frame address
+    # $4 - Image address
+    # $5 - Offset (diff between frame address and image address)
+    THREAD_FRAME_MATCHER = /^(\d+)\s+([^\s]+)\s+(0x[0-9a-f]+)\s(0x[0-9a-f]+)\s\+\s(\d+)/
+    REGISTER_STATE_MATCHER = /Thread State.*:$/
+    IMAGE_STATE_MATCHER = /Binary Images:/
+    # Matches a single register value
+    # $1 - Register name
+    # $2 - Register address
+    REGISTER_MATCHER = /([\w]+):\s(0x[0-f]+)/
+    # A binary image entry
+    # $1 - Address
+    # $2 - Name
+    # $3 - UUID
+    # $4 - File path
+    IMAGE_MATCHER = /^(0x[0-f]+)\s\-\s0x[0-f]+\s([^ ]+)\s\w+\s+<([0-9a-f]+)>\s+(.*)/
+
+    def parse_header contents
+      while @state == :header and contents.length > 0
+        case contents.shift
+        when THREAD_NAME_MATCHER
+          @state = :thread
+          current_backtrace = { index: $1, name: $2, stacktrace: [] }
+          report.backtraces << current_backtrace
+        when HEADER_FIELD_MATCHER
+          report.header[$1] = $2
+        end
+      end
+    end
+
+    def parse_threads contents
+      while @state == :thread and contents.length > 0
+        case contents.shift
+        when REGISTER_STATE_MATCHER
+          @state = :registers
+        when IMAGE_STATE_MATCHER
+          @state = :images
+        when THREAD_NAME_MATCHER
+          current_backtrace = { index: $1, name: $2, stacktrace: [] }
+          report.backtraces << current_backtrace
+        when THREAD_CRASH_MATCHER
+          if current_backtrace.nil?
+            current_backtrace = { index: $1, stacktrace: [] }
+            report.backtraces << current_backtrace
+          end
+          current_backtrace[:crashed] = $2 != nil
+        when THREAD_FRAME_MATCHER
+          current_backtrace[:stacktrace] << {
+            machoFile: $2,
+            frameAddress: $3,
+            machoLoadAddress: $4,
+          }
+        when ""
+          current_backtrace = nil
+        end
+      end
+    end
+
+    def parse_registers contents
+      while @state == :registers and contents.length > 0
+        case line = contents.shift
+        when ""
+        when IMAGE_STATE_MATCHER
+          @state = :images
+        else
+          line.scan(REGISTER_MATCHER).each do |match|
+            case match.first
+            when 'pc'
+              report.program_counter = match[1]
+            when 'lr'
+              report.link_register = match[1]
+            end
+          end
+        end
+      end
+    end
+
+    def parse_images contents
+      while @state == :images and contents.length > 0
+        case line = contents.shift
+        when "EOF"
+        when ""
+          @state = :eof
+        when IMAGE_MATCHER
+          uuid = $3.upcase
+          uuid.insert(8, '-')
+          uuid.insert(13, '-')
+          uuid.insert(18, '-')
+          uuid.insert(23, '-')
+          # Potentially unreasonable assumption that the first image is the
+          # host app's image
+          report.app_uuid = uuid if report.binary_images.empty?
+          report.binary_images[$1] = {
+            name: $2,
+            uuid: uuid,
+            path: $4
+          }
+        else
+          puts "Unknown binary format:\n#{line}"
+        end
+      end
+    end
+  end
+end
+
+if __FILE__ == $0
+  api_key = ARGV[0]
+  crash_log = ARGV[1]
+  BugsnagAppleReporter.send_report(api_key, crash_log)
+end
