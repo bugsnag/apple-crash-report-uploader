@@ -156,9 +156,9 @@ module BugsnagAppleReporter
       end
       {
         notifier: {
-          name: 'iOS Bugsnag Notifier',
+          name: 'iOS Bugsnag Crash Report Upload Tool',
           url: 'https://github.com/bugsnag/bugsnag-cocoa',
-          version: '5.15.4',
+          version: '1.0.0',
         },
         events: [event],
       }
