@@ -6,7 +6,7 @@
 #
 # or via command-line:
 #
-#     bugsnag-apple-reporter "BUGSNAG_API_KEY" "/path/to/crash.log"
+#     bugsnag-upload-report "BUGSNAG_API_KEY" "/path/to/crash.log"
 #
 require 'net/http'
 require 'uri'
