@@ -21,6 +21,7 @@ module BugsnagAppleReporter
     payload = BugsnagAppleReporter::Formatter.new(report).format
     transport = BugsnagAppleReporter::Transport.new(endpoint, api_key)
     transport.deliver(payload)
+    puts "Sent crash report for #{crash_log_path}"
   end
 
   class Report
@@ -50,7 +51,7 @@ module BugsnagAppleReporter
       payload[:apiKey] = @api_key
       http = Net::HTTP.new(uri.host, uri.port)
       http.use_ssl = uri.port == 443
-      http.post(uri.path.empty? ? '/' : uri.path,
+      response = http.post(uri.path.empty? ? '/' : uri.path,
                 JSON.dump(payload),
                 {
         'Content-Type' => 'application/json',
@@ -58,6 +59,7 @@ module BugsnagAppleReporter
         'Bugsnag-Api-Key' => @api_key,
         'Bugsnag-Payload-Version' => '4',
       })
+      raise 'Failed to send report' unless response.is_a?(Net::HTTPSuccess)
     end
   end
 
