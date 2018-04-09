@@ -11,3 +11,9 @@ If not already installed, follow [these instructions](https://www.ruby-lang.org/
 ```bash
 ./bin/bugsnag-upload-report <API-KEY> <PATH-TO-CRASH-REPORT>
 ```
+
+## Finding uploaded reports
+
+To find individual uploaded reports in the Bugsnag dashboard, use the 'Incident Identifier' field which is displayed in the 'Report' tab.
+
+To search for individual reports in the dashboard add a [custom filter](https://docs.bugsnag.com/product/custom-filters/) for the path `metaData.report.Incident Identifier`.
