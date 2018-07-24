@@ -259,6 +259,7 @@ module BugsnagAppleReporter
           current_backtrace[:stacktrace] << {
             machoFile: $2,
             frameAddress: $3,
+            method: $3,
             machoLoadAddress: $4,
           }
         when ""
