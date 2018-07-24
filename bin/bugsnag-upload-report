@@ -224,7 +224,7 @@ module BugsnagAppleReporter
     # $2 - Name
     # $3 - UUID
     # $4 - File path
-    IMAGE_MATCHER = /^(0x[0-f]+)\s\-\s0x[0-f]+\s([^ ]+)\s\w+\s+<([0-9a-f]+)>\s+(.*)/
+    IMAGE_MATCHER = /^(0x[0-f]+)\s\-\s0x[0-f]+\s([^ ]+)\s\w+\s+<([0-9a-fA-F]+)>\s+(.*)/
 
     def parse_header contents
       while @state == :header and contents.length > 0
