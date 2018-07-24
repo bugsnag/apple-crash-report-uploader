@@ -184,7 +184,7 @@ module BugsnagAppleReporter
     # * registers: Parse registers
     # * images: Parse binary images
     def parse
-      contents = open(report_path, &:read).split("\n")
+      contents = open(report_path, &:read).split("\n").map(&:chomp)
       parse_header(contents)
       parse_threads(contents)
       parse_registers(contents)
