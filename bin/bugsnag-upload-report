@@ -228,11 +228,10 @@ module BugsnagAppleReporter
 
     def parse_header contents
       while @state == :header and contents.length > 0
-        case contents.shift
-        when THREAD_NAME_MATCHER
+        case line = contents.shift
+        when THREAD_NAME_MATCHER, THREAD_CRASH_MATCHER
           @state = :thread
-          current_backtrace = { index: $1, name: $2, stacktrace: [] }
-          report.backtraces << current_backtrace
+          contents.unshift(line)
         when HEADER_FIELD_MATCHER
           report.header[$1] = $2
         end
