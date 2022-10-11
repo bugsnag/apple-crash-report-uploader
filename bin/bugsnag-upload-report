@@ -141,9 +141,10 @@ module BugsnagAppleReporter
       end
       report.backtraces.each do |backtrace|
         backtrace[:stacktrace].each do |frame|
-          if image = report.binary_images[frame[:machoLoadAddress]]
+          if image = report.binary_images[frame[:machoFile]]
             frame[:machoFile] = image[:path]
             frame[:machoUUID] = image[:uuid]
+            frame[:machoLoadAddress] = image[:addr]
           end
           frame[:isPC] = true if frame[:frameAddress] == report.program_counter
           frame[:isLR] = true if frame[:frameAddress] == report.link_register
@@ -160,7 +161,7 @@ module BugsnagAppleReporter
         notifier: {
           name: 'iOS Bugsnag Crash Report Upload Tool',
           url: 'https://github.com/bugsnag/bugsnag-cocoa',
-          version: '1.0.0',
+          version: '1.0.1',
         },
         events: [event],
       }
@@ -206,13 +207,14 @@ module BugsnagAppleReporter
     # Matches a frame in a stacktrace in the format:
     #
     #   2   libdispatch.dylib 0x00000001836a9e58 0x1836a5000 + 20056
+    #   3   libobjc.A.dylib 0x190dddefc _objc_terminate() + 160
     #
     # $1 - Frame number
     # $2 - Binary name
     # $3 - Frame address
-    # $4 - Image address
+    # $4 - Image address if unsymbolicated, or symbol name
     # $5 - Offset (diff between frame address and image address)
-    THREAD_FRAME_MATCHER = /^(\d+)\s+([^\s]+)\s+(0x[0-9a-f]+)\s(0x[0-9a-f]+)\s\+\s(\d+)/
+    THREAD_FRAME_MATCHER = /^(\d+)\s+([^\s]+)\s+(0x[0-9a-f]+)\s(.+)\s\+\s(\d+)/
     REGISTER_STATE_MATCHER = /Thread State.*:$/
     IMAGE_STATE_MATCHER = /Binary Images:/
     # Matches a single register value
@@ -224,7 +226,7 @@ module BugsnagAppleReporter
     # $2 - Name
     # $3 - UUID
     # $4 - File path
-    IMAGE_MATCHER = /^(0x[0-f]+)\s\-\s0x[0-f]+\s([^ ]+)\s\w+\s+<([0-9a-fA-F]+)>\s+(.*)/
+    IMAGE_MATCHER = /(0x[0-f]+)\s+\-\s+0x[0-f]+\s([^ ]+)\s\w+\s+<([0-9a-fA-F]+)>\s+(.*)/
 
     def parse_header contents
       while @state == :header and contents.length > 0
@@ -258,8 +260,7 @@ module BugsnagAppleReporter
           current_backtrace[:stacktrace] << {
             machoFile: $2,
             frameAddress: $3,
-            method: $3,
-            machoLoadAddress: $4,
+            method: $3
           }
         when ""
           current_backtrace = nil
@@ -301,7 +302,8 @@ module BugsnagAppleReporter
           # Potentially unreasonable assumption that the first image is the
           # host app's image
           report.app_uuid = uuid if report.binary_images.empty?
-          report.binary_images[$1] = {
+          report.binary_images[File.basename($4)] = {
+            addr: $1,
             name: $2,
             uuid: uuid,
             path: $4
