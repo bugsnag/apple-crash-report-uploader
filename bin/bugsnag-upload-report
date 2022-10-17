@@ -127,6 +127,7 @@ module BugsnagAppleReporter
           dsymUUIDs: [ report.app_uuid ],
         },
         device: {
+          id: report.header.delete("CrashReporter Key"),
           model: report.header.delete("Hardware Model"),
           osName: os[1],
           osVersion: os[2],
@@ -161,7 +162,7 @@ module BugsnagAppleReporter
         notifier: {
           name: 'iOS Bugsnag Crash Report Upload Tool',
           url: 'https://github.com/bugsnag/bugsnag-cocoa',
-          version: '1.0.1',
+          version: '1.0.2',
         },
         events: [event],
       }
