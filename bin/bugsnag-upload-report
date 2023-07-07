@@ -142,7 +142,7 @@ module BugsnagAppleReporter
       end
       report.backtraces.each do |backtrace|
         backtrace[:stacktrace].each do |frame|
-          if image = report.binary_images[File.basename(frame[:machoFile])]
+          if image = report.binary_images[frame[:machoFile]]
             frame[:machoFile] = image[:path]
             frame[:machoUUID] = image[:uuid]
             frame[:machoLoadAddress] = image[:addr]
