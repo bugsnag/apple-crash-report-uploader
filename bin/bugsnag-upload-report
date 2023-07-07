@@ -201,10 +201,11 @@ module BugsnagAppleReporter
     HEADER_FIELD_MATCHER = /^(\w.*?):\s+(.*)$/
     # $1 - Thread number
     # $2 - Thread name
-    THREAD_NAME_MATCHER = /^^Thread (\d+)( Name| name)?::?\s(.*)$/
+    THREAD_NAME_MATCHER = /^^Thread (\d+)(?: Name)?::?\s(.*)$/i
     # $1 - Thread number
     # $2 - non-nil if thread crashed
-    THREAD_CRASH_MATCHER = /^Thread (\d+)( Crashed| crashed)?::?\s?(.*)$/
+    # $3 - Thread name
+    THREAD_CRASH_MATCHER = /^Thread (\d+)( Crashed)?::?\s?(.*)$/i
     # Matches a frame in a stacktrace in the format:
     #
     #   2   libdispatch.dylib 0x00000001836a9e58 0x1836a5000 + 20056
@@ -249,11 +250,11 @@ module BugsnagAppleReporter
         when IMAGE_STATE_MATCHER
           @state = :images
         when THREAD_NAME_MATCHER
-          current_backtrace = { index: $1, name: ($1.to_s + " " + $3.to_s), stacktrace: [] }
+          current_backtrace = { id: $1, name: $2, stacktrace: [] }
           report.backtraces << current_backtrace
         when THREAD_CRASH_MATCHER
           if current_backtrace.nil?
-            current_backtrace = { index: $1, name: $1, stacktrace: [] }
+            current_backtrace = { id: $1, name: $3, stacktrace: [] }
             report.backtraces << current_backtrace
           end
           current_backtrace[:crashed] = $2 != nil
