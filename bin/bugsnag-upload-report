@@ -142,7 +142,7 @@ module BugsnagAppleReporter
       end
       report.backtraces.each do |backtrace|
         backtrace[:stacktrace].each do |frame|
-          if image = report.binary_images[frame[:machoFile]]
+          if image = report.binary_images[File.basename(frame[:machoFile])]
             frame[:machoFile] = image[:path]
             frame[:machoUUID] = image[:uuid]
             frame[:machoLoadAddress] = image[:addr]
@@ -204,7 +204,7 @@ module BugsnagAppleReporter
     THREAD_NAME_MATCHER = /^^Thread (\d+)( Name| name)?::?\s(.*)$/
     # $1 - Thread number
     # $2 - non-nil if thread crashed
-    THREAD_CRASH_MATCHER = /^Thread (\d+)( Crashed| crashed)?::?\s(.*)$/
+    THREAD_CRASH_MATCHER = /^Thread (\d+)( Crashed| crashed)?::?\s?(.*)$/
     # Matches a frame in a stacktrace in the format:
     #
     #   2   libdispatch.dylib 0x00000001836a9e58 0x1836a5000 + 20056
@@ -227,7 +227,7 @@ module BugsnagAppleReporter
     # $2 - Name
     # $3 - UUID
     # $4 - File path
-    IMAGE_MATCHER = /(0x[0-f]+)\s+\-\s+0x[0-f]+\s([^ ]+)\s\w+\s+<([0-9a-fA-F]+)>\s+(.*)/
+    IMAGE_MATCHER = /(0x[0-f]+)\s+\-\s+0x[0-f]+\s+([^ ]+)\s\([^)]+\)\s+<([0-9a-fA-F-]+)>\s+(.*)/
 
     def parse_header contents
       while @state == :header and contents.length > 0
@@ -263,7 +263,8 @@ module BugsnagAppleReporter
               current_backtrace[:stacktrace] << {
                 machoFile: $2,
                 frameAddress: $3,
-                method: $3
+                # Include the symbol name and offset
+                method: "#{$4} + #{$5}",
               }
             end
           end
@@ -300,6 +301,7 @@ module BugsnagAppleReporter
           @state = :eof
         when IMAGE_MATCHER
           uuid = $3.upcase
+          uuid.tr!('-', '')
           uuid.insert(8, '-')
           uuid.insert(13, '-')
           uuid.insert(18, '-')
